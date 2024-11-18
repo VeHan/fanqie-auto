@@ -1,3 +1,6 @@
+import subprocess
+from functools import partial
+subprocess.Popen = partial(subprocess.Popen, encoding="utf-8")
 import execjs
 
 from utils import readfile

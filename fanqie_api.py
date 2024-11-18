@@ -2,6 +2,7 @@ import json
 import time
 import traceback
 
+from proxy import proxies
 from log_config import logger
 
 import requests
@@ -9,6 +10,57 @@ import requests
 from a_b import get_ab
 
 UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+content_tab_config = [
+    {
+        'app_name': "danhua",
+        'platform': "蛋花",
+        'content_tab': 10,
+        'genre': {
+            203: '短剧',
+            0: '网文',
+            8: '短故事'
+        }
+    },
+    {
+        "app_name": "novelread",
+        "platform": "红果",
+        'content_tab': 6,
+        'genre': {
+            203: '全部内容'
+        },
+        'alias_type': 5
+    },
+    {
+
+        "app_name": "novel_fm",
+        "platform": "番茄畅听",
+        'content_tab': 3,
+        'genre': {
+            203: '短剧',
+            0: '网文',
+            4: '有声书',
+        },
+        'alias_type': 2
+    },
+    {
+        'app_name': 'fanqie_novel',
+        "platform": "番茄小说",
+        'content_tab': 2,
+        'genre': {
+            203: '短剧',
+            0: '网文',
+            1: '漫画',
+            4: '有声书',
+        },
+        'alias_type': 1
+    }
+]
+
+
+def get_content_tab_config(content_tab):
+    for config_item in content_tab_config:
+        if config_item['content_tab'] == content_tab:
+            return config_item
 
 
 def dump(data):
@@ -18,6 +70,7 @@ def dump(data):
 class FanqieApi:
     def __init__(self):
         self.session = requests.session()
+        self.session.proxies.update(proxies)
         self.headers = {
             'accept': 'application/json, text/plain, */*',
             'accept-language': 'zh-CN,zh;q=0.9',
@@ -71,26 +124,30 @@ class FanqieApi:
 
         json = response.json()
         if json['code'] != 0:
-            logger.info("获取失败")
+            logger.info("获取失败 %s", json)
+            return []
         else:
             book_list = json['data']['book_list']
             return book_list
 
-    def apply(self, book, keywords):
-        logger.info("开始申词 book_id:{}, book_name={}, keywords:{}".format(book['book_id'], book['book_name'], keywords))
-        params = 'app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=-HEQnThcgIlshkCgIOlqGgzI6A5TAjx3XOfMa1TmCGpK5TTbTxsfet06LLsxZ_sR6FebnWq1nlbt9DaUjDd_QyBBz2gQPXbI7ALVUVagMRDliYc5T7QERILtiK8aTJZxBvraWVxOdbxqitAuiR20ruMmaLOeaZQ%3D'
-        url = 'https://promoter.fanqieopen.com/api/platform/promotion/plan/create/v:version?' + params
+    def apply(self, book, keywords, content_tab):
+        logger.info(
+            "开始申词 book_id:{}, book_name={}, keywords:{}".format(book['book_id'], book['book_name'], keywords))
+
         for keyword in keywords:
             time.sleep(5)
-            self.apply_keyword(book, keyword, params, url)
+            self.apply_keyword(book, keyword, content_tab)
 
-    def apply_keyword(self, book, keyword, params, url):
+    def apply_keyword(self, book, keyword, content_tab):
         try:
+            params = 'app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=-HEQnThcgIlshkCgIOlqGgzI6A5TAjx3XOfMa1TmCGpK5TTbTxsfet06LLsxZ_sR6FebnWq1nlbt9DaUjDd_QyBBz2gQPXbI7ALVUVagMRDliYc5T7QERILtiK8aTJZxBvraWVxOdbxqitAuiR20ruMmaLOeaZQ%3D'
+            url = 'https://promoter.fanqieopen.com/api/platform/promotion/plan/create/v:version?' + params
+            alias_type = get_content_tab_config(content_tab)['alias_type']
             data = {"book_id": f"{book['book_id']}",
-                    "alias_type": 8,
+                    "alias_type": alias_type,
                     "alias_name": keyword,
                     "metrics_data": {"app_id": "457699", "create_entrance": "book_list", "app_name": "danhua",
-                                     "sub_page_name": "全部内容", "genre": "203", "is_recommend": "0"}
+                                     "sub_page_name": "全部内容", "genre": f"{book['genre']}", "is_recommend": "0"}
                     }
             logger.info('申请别名: {}'.format(keyword))
             body = dump(data)
@@ -106,13 +163,14 @@ class FanqieApi:
             logger.info('请求失败')
             traceback.print_exc()
 
-    def get_promotions(self, task_type, page_index):
+    def get_promotions(self, content_tab, page_index):
 
+        alias_type = get_content_tab_config(content_tab)['alias_type']
         # 定义请求的URL和查询参数
         params = 'task_type={task_type}&alias_status=1&post_status=1&need_post_audit=true&page_index={page_index}&page_size=10&app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=eEGp0Ku7bIIzVSwlsKJfitbwmj-tJYy62HGpCv1RDpSdKp7O7WBc9w0xYWdIpgeLv7J16D_J21EAYOT0f3Tv16LyYLuhUmFb2f3kpfe_26mt8-lbys3F6bLiKpOQSfJgG_FpiXuuQs-YTVVzeLNTGoO6vx2pTwhtlI9ksH9QMA%3D%3D'
         url = 'https://promoter.fanqieopen.com/api/platform/promotion/plan/list/v:version?'
         params = params.format_map({
-            'task_type': task_type,
+            'task_type': alias_type,
             'page_index': page_index,
         })
         ab = get_ab(params, None, UA)
@@ -121,7 +179,8 @@ class FanqieApi:
 
         json = response.json()
         if json['code'] != 0:
-            logger.info("获取失败")
+            logger.error("获取失败 %s", json)
+            return []
         else:
             promotion_list = json['data']['promotion_list']
             return promotion_list
@@ -129,7 +188,7 @@ class FanqieApi:
     def huitian(self, alias_id, post_link, alias_type):
         params = 'post_link={post_link}&alias_id={alias_id}&post_platform_type=1&promotion_type=1&app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=3-7ozUs6_ZHGfc_YwnqZnCscsBl12sbP1ncr2yqhiYIM8s4LKzh2Cx89X4a6nfRw8ic8CVkwCwfFu9CGJZydeh28E8V5QNMzw4UKDXwYcAGC11TKIQ8KcSjEudS6iqxD8n14FTGrc3KYBN9OVHEbWBUJJrFYa2_aXlNW3m-x'
         url = 'https://promoter.fanqieopen.com/api/platform/promotion/post/link/parse/v:version?'
-        print('回填: alias_id={}, post_link={}'.format(alias_id, post_link))
+        logger.info('回填: alias_id={}, post_link={}'.format(alias_id, post_link))
 
         params = params.format_map({
             'post_link': post_link,
@@ -141,7 +200,7 @@ class FanqieApi:
         response = self.session.get(url_ab, headers=self.headers)
         json = response.json()
         if json['code'] != 0:
-            logger.info("parse失败", json)
+            logger.error("parse失败 %s", json)
         else:
             self.huitian2(alias_id, post_link, alias_type)
 
@@ -159,6 +218,6 @@ class FanqieApi:
         response = self.session.post(url_ab, headers=self.headers, data=body)
         json = response.json()
         if json['code'] != 0:
-            logger.info("回填失败 {}", json)
+            logger.info("回填失败 %s", json)
         else:
             logger.info("回填成功")

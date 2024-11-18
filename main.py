@@ -4,9 +4,9 @@ import time
 import traceback
 from datetime import datetime
 
+from config import config
 from douyin_api import DouyinApi
 from fanqie_api import FanqieApi
-from utils import readfile
 from log_config import logger
 
 
@@ -15,12 +15,11 @@ fanqie_api = FanqieApi()
 
 
 def main():
-    config = json.loads(readfile('config.json'))
     fanqie_api.login(config['username'], config['password'])
     apply_word_thread = threading.Thread(target=apply_words, name='ApplyWordThread', args=(config,))
     apply_word_thread.start()
 
-    huitian_thread = threading.Thread(target=huitian, name='HuiTianThread')
+    huitian_thread = threading.Thread(target=huitian, name='HuiTianThread',args=(config,))
     huitian_thread.start()
     huitian_thread.join()
 
@@ -33,7 +32,7 @@ def apply_words(config):
             books = fanqie_api.get_content_tab(config['content_tab'], config['genre'], page_index)
             for book in books:
                 time.sleep(5)
-                apply_work_for_book(book)
+                apply_work_for_book(book, config['content_tab'])
             if books:
                 page_index += 1
             else:
@@ -46,7 +45,7 @@ def apply_words(config):
             time.sleep(60)
 
 
-def apply_work_for_book(book):
+def apply_work_for_book(book, content_tab):
     logger.info("------------------------")
     logger.info(f'扫描到内容 book_id={book["book_id"]} book_name={book["book_name"]}')
     try:
@@ -55,31 +54,28 @@ def apply_work_for_book(book):
             if 'aweme_info' not in video:
                 continue
             desc = video['aweme_info']['desc']
-            keywords = filter_keywords(list(t for t in desc.split('#')))
+            keywords = filter_keywords( list(t for t in desc.split('#')), book['book_name'])
             if not keywords:
                 continue
-            fanqie_api.apply(book, keywords)
+            fanqie_api.apply(book, keywords, content_tab)
     except Exception as e:
         traceback.print_exc()
         logger.error("apply_work_for_book出错",)
     logger.info("------------------------")
 
 
-def huitian():
+def huitian(config):
     page_index = 0
     while True:
         try:
-            promotions = fanqie_api.get_promotions(8, page_index)
+            promotions = fanqie_api.get_promotions(config['content_tab'], page_index)
             if not promotions:
+                page_index = 1
                 continue
             for promotion in promotions:
                 huitian_promotion(promotion)
                 time.sleep(3)
-            if promotions:
-                page_index += 1
-            else:
-                # 从头开始
-                page_index = 1
+            page_index += 1
         except Exception as e:
             traceback.print_exc()
             logger.error("huitian error")
@@ -112,7 +108,7 @@ def huitian_promotion(promotion):
         if target_video is None:
             logger.info('未找到符合条件的视频')
         else:
-            logger.info("已找到符合条件的视频 {}", target_video)
+            logger.info("已找到符合条件的视频 %s", target_video)
             fanqie_api.huitian(alias_id, f'https://www.douyin.com/video/{target_video['aweme_info']['aweme_id']}',
                                alias_type)
     except Exception as e:
@@ -122,7 +118,7 @@ def huitian_promotion(promotion):
         logger.info("----------------------")
 
 
-def filter_keywords(keywords: []):
+def filter_keywords(keywords: [], book_name):
     result = []
     for keyword in keywords:
         keyword = remove_non_chinese(keyword)
@@ -132,12 +128,14 @@ def filter_keywords(keywords: []):
             continue
         if len(keyword) > 8 or len(keyword) < 4:
             continue
+        if keyword.startswith(book_name[0:3]):
+            continue
         result.append(keyword)
     return result
 
 
 def is_black(keyword):
-    blacklist = ['短剧', '小说', '推文', '漫画', '抖音', '新剧', '动画']
+    blacklist = ['短剧', '小说', '推文', '漫画', '抖音', '新剧', '动画', '一口气看完']
     for black in blacklist:
         if black in keyword:
             return True

@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import TimedRotatingFileHandler
 
 # 配置日志记录系统
 logging.basicConfig(
@@ -6,7 +7,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(threadName)s - %(levelname)s - %(message)s',  # 设置日志格式
     handlers=[
         logging.StreamHandler(),  # 将日志输出到控制台
-        logging.FileHandler('app.log')  # 将日志输出到文件
+        TimedRotatingFileHandler('app.log', when='midnight', interval=1, backupCount=7)  # 将日志输出到文件
     ]
 )
 

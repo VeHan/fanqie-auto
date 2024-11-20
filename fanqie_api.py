@@ -1,6 +1,8 @@
 import json
 import time
 import traceback
+import urllib
+from threading import Lock
 
 from proxy import proxies
 from log_config import logger
@@ -11,16 +13,17 @@ from a_b import get_ab
 
 UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 content_tab_config = [
-    {
-        'app_name': "danhua",
-        'platform': "蛋花",
-        'content_tab': 10,
-        'genre': {
-            203: '短剧',
-            0: '网文',
-            8: '短故事'
-        }
-    },
+    # {
+    #     'app_name': "danhua",
+    #     'platform': "蛋花",
+    #     'content_tab': 10,
+    #     'genre': {
+    #         203: '短剧',
+    #         0: '网文',
+    #         8: '短故事'
+    #     },
+    #     'alias_type': 8
+    # },
     {
         "app_name": "novelread",
         "platform": "红果",
@@ -67,6 +70,10 @@ def dump(data):
     return json.dumps(data, separators=(',', ':'), ensure_ascii=False)
 
 
+class ApplyWordLimitException(Exception):
+    pass
+
+
 class FanqieApi:
     def __init__(self):
         self.session = requests.session()
@@ -88,6 +95,7 @@ class FanqieApi:
             'sec-fetch-site': 'same-origin',
             'user-agent': UA
         }
+        self.lock = Lock()
 
     def login(self, username, password):
         # 定义请求的URL和查询参数
@@ -131,12 +139,20 @@ class FanqieApi:
             return book_list
 
     def apply(self, book, keywords, content_tab):
-        logger.info(
-            "开始申词 book_id:{}, book_name={}, keywords:{}".format(book['book_id'], book['book_name'], keywords))
-
-        for keyword in keywords:
-            time.sleep(5)
-            self.apply_keyword(book, keyword, content_tab)
+        self.lock.acquire()
+        try:
+            logger.info(
+                "开始申词 book_id:{}, book_name={}, keywords:{}".format(book['book_id'], book['book_name'], keywords))
+            for keyword in keywords:
+                time.sleep(3)
+                promotions = self.search_alias(content_tab, keyword)
+                time.sleep(2)
+                if promotions:
+                    logger.info('已经申请该词: {}'.format(keyword))
+                    continue
+                self.apply_keyword(book, keyword, content_tab)
+        finally:
+            self.lock.release()
 
     def apply_keyword(self, book, keyword, content_tab):
         try:
@@ -156,9 +172,15 @@ class FanqieApi:
             response = self.session.post(url_ab, headers=self.headers, data=body)
             json = response.json()
             if json['code'] != 0:
-                logger.info('申词失败 message:{}, reason:{}'.format(json['message'], json['data']['reason']))
+                if json['data']:
+                    reason = json['data']['reason']
+                    logger.info('申词失败 message:{}, reason:{}'.format(json['message'], reason))
+                    if reason and '当日次数已用完' in reason[0]:
+                        raise ApplyWordLimitException()
             else:
                 logger.info('申词成功')
+        except ApplyWordLimitException as e:
+            raise e
         except Exception as e:
             logger.info('请求失败')
             traceback.print_exc()
@@ -221,3 +243,24 @@ class FanqieApi:
             logger.info("回填失败 %s", json)
         else:
             logger.info("回填成功")
+
+    def search_alias(self, content_tab, alias_name):
+        alias_type = get_content_tab_config(content_tab)['alias_type']
+        # 定义请求的URL和查询参数
+        params = 'alias_name={alias_name}&task_type={task_type}&need_post_audit=true&page_index={page_index}&page_size=10&app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=rxp98PbE8B9TLrAXdShg9hEEW8cFiCdCBJvd4l5P0AUid1rVG6zIRbvbvn2PizluxCcDcwRx0uiB8orCTxJTj-OzJCRyLzfbP3QnNnDTB2EuRyb0cCPbR2D8lia2OtDbWSsdBnJJNA2s0dy94vNqh4dX1Djp0pRluXSP7S2meA%3D%3D'
+        url = 'https://promoter.fanqieopen.com/api/platform/promotion/plan/list/v:version?'
+        params = params.format_map({
+            'task_type': alias_type,
+            'page_index': 0,
+            'alias_name': urllib.parse.quote(alias_name, safe=''),
+        })
+        ab = get_ab(params, None, UA)
+        url_ab = f'{url}{params}&a_bogus={ab}'
+        response = self.session.get(url_ab, headers=self.headers)
+        json = response.json()
+        if json['code'] != 0:
+            logger.error("search_alias失败 %s", json)
+            return []
+        else:
+            promotion_list = json['data']['promotion_list']
+            return promotion_list

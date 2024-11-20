@@ -1,5 +1,5 @@
 from config import config
 
 proxies = {
-  'https': config['proxy'],
+  'http': config['proxy'],
 }

@@ -3,7 +3,6 @@ import json
 import requests
 
 from a_b import get_ab
-from proxy import proxies
 
 UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 
@@ -13,9 +12,12 @@ def dump(data):
 
 
 class DouyinApi:
-    def __init__(self):
+    def __init__(self, proxy):
         self.session = requests.session()
-        self.session.proxies.update(proxies)
+        if proxy:
+            self.session.proxies.update({
+                'http': proxy,
+            })
         self.headers = {
             'accept': 'application/json, text/plain, */*',
             'accept-language': 'zh-CN,zh;q=0.9',

@@ -4,7 +4,6 @@ import traceback
 import urllib
 from threading import Lock
 
-from proxy import proxies
 from log_config import logger
 
 import requests
@@ -13,17 +12,17 @@ from a_b import get_ab
 
 UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
 content_tab_config = [
-    # {
-    #     'app_name': "danhua",
-    #     'platform': "蛋花",
-    #     'content_tab': 10,
-    #     'genre': {
-    #         203: '短剧',
-    #         0: '网文',
-    #         8: '短故事'
-    #     },
-    #     'alias_type': 8
-    # },
+    {
+        'app_name': "danhua",
+        'platform': "蛋花",
+        'content_tab': 10,
+        'genre': {
+            203: '短剧',
+            0: '网文',
+            8: '短故事'
+        },
+        'alias_type': 8,
+    },
     {
         "app_name": "novelread",
         "platform": "红果",
@@ -75,9 +74,12 @@ class ApplyWordLimitException(Exception):
 
 
 class FanqieApi:
-    def __init__(self):
+    def __init__(self, proxy):
         self.session = requests.session()
-        self.session.proxies.update(proxies)
+        if proxy:
+            self.session.proxies.update({
+                'http': proxy,
+            })
         self.headers = {
             'accept': 'application/json, text/plain, */*',
             'accept-language': 'zh-CN,zh;q=0.9',
@@ -115,6 +117,26 @@ class FanqieApi:
         if response.json()['code'] != 0:
             raise Exception("登录失败")
         logger.info("登录成功")
+
+    def get_task(self, content_tab):
+        # 定义请求的URL和查询参数
+        params = 'app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=M4YCHO2rJC5RQudrBxEDp9YjSHoSWMajbAT3c0KjvSs5fM1_ZE86t2sqURufil6u__-zs1awQzSrziGMy1ESPJmlG9abrCX7jmn5M-FdV43PEby_CfPlTK7s-wlFx78rKrhk8WLbouClEghthyaS5yxVvxoji4Rguo-t-pAX5w%3D%3D'
+        url = 'https://promoter.fanqieopen.com/api/platform/kol/task_center/list/v:version?'
+
+        ab = get_ab(params, None, UA)
+        url_ab = f'{url}{params}&a_bogus={ab}'
+        response = self.session.get(url_ab, headers=self.headers)
+
+        json = response.json()
+        if json['code'] != 0:
+            logger.info("获取失败 %s", json)
+            return None
+        else:
+            task_list = json['task_list']
+            for task in task_list:
+                if str(task['task_type']) == str(content_tab):
+                    return task
+            return None
 
     def get_content_tab(self, content_tab, genre, index):
         # 定义请求的URL和查询参数
@@ -185,15 +207,26 @@ class FanqieApi:
             logger.info('请求失败')
             traceback.print_exc()
 
-    def get_promotions(self, content_tab, page_index):
+    def get_unpost_promotions(self, content_tab, page_index):
+        return self.get_promotions(content_tab, page_index, 1, 1)
+
+    def get_expire_promotions(self, content_tab, page_index):
+        return self.get_promotions(content_tab, page_index, 100, None)
+
+
+    def get_promotions(self, content_tab, page_index, alias_status, post_status):
+        # alias_status 1:生效中 100:即将失效
+        # post_status 1:未填写 2:已填写
 
         alias_type = get_content_tab_config(content_tab)['alias_type']
         # 定义请求的URL和查询参数
-        params = 'task_type={task_type}&alias_status=1&post_status=1&need_post_audit=true&page_index={page_index}&page_size=10&app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=eEGp0Ku7bIIzVSwlsKJfitbwmj-tJYy62HGpCv1RDpSdKp7O7WBc9w0xYWdIpgeLv7J16D_J21EAYOT0f3Tv16LyYLuhUmFb2f3kpfe_26mt8-lbys3F6bLiKpOQSfJgG_FpiXuuQs-YTVVzeLNTGoO6vx2pTwhtlI9ksH9QMA%3D%3D'
+        params = 'task_type={task_type}&alias_status={alias_status}{post_status}&need_post_audit=true&page_index={page_index}&page_size=10&app_id=457699&aid=457699&origin_app_id=457699&host_app_id=457699&msToken=eEGp0Ku7bIIzVSwlsKJfitbwmj-tJYy62HGpCv1RDpSdKp7O7WBc9w0xYWdIpgeLv7J16D_J21EAYOT0f3Tv16LyYLuhUmFb2f3kpfe_26mt8-lbys3F6bLiKpOQSfJgG_FpiXuuQs-YTVVzeLNTGoO6vx2pTwhtlI9ksH9QMA%3D%3D'
         url = 'https://promoter.fanqieopen.com/api/platform/promotion/plan/list/v:version?'
         params = params.format_map({
             'task_type': alias_type,
             'page_index': page_index,
+            'alias_status': alias_status,
+            'post_status': '' if post_status is None else f'&post_status={post_status}',
         })
         ab = get_ab(params, None, UA)
         url_ab = f'{url}{params}&a_bogus={ab}'

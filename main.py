@@ -1,27 +1,47 @@
-import json
 import threading
 import time
 import traceback
 from datetime import datetime, timedelta
 
-from config import config
 from douyin_api import DouyinApi
 from fanqie_api import FanqieApi, ApplyWordLimitException, content_tab_config
 from log_config import logger
+import pandas as pd
 
-douyin_api = DouyinApi()
 
 
 def main():
+
+    # 读取Excel文件
+    df = pd.read_excel('账号.xlsx', sheet_name='账号配置')
+    print(df)
+
+    for index, row in df.iterrows():
+        # 访问当前行的数据，可以通过row['column_name']的方式获取特定列的值
+        # 例如，如果Excel文件中有一列名为'Name'，你可以通过row['Name']来获取该列的值
+        username = row['username']
+        passowrd = row['password']
+        proxy = row['proxy']
+        enable = row['启用']
+        if enable == 'Y':
+            logger.info("启用账号 %s %s %s", username, passowrd, proxy)
+            start_account(username, passowrd, proxy)
+
+def start_account(username, password, proxy):
     for content_tab_config_item in content_tab_config:
         genre_map = content_tab_config_item['genre']
         platform = content_tab_config_item['platform']
         content_tab = content_tab_config_item['content_tab']
-        worker = Worker()
-        worker.login(config['username'], config['password'])
+
+        worker = Worker(proxy)
+        worker.login(username, password)
+        task = worker.fanqie_api.get_task(content_tab)
+        if task is None or task['task_status'] == 0:
+            logger.info("账号不支持%s", platform)
+            continue
         for genre in genre_map:
             apply_word_thread = threading.Thread(target=Worker.apply_words,
-                                                 name=f'ApplyWordThread-{platform}-{genre_map[genre]}',
+                                                 name=f'ApplyWordThread-{username}-{password}-{platform}-{genre_map[genre]}',
                                                  args=(worker, {
                                                      'content_tab': content_tab,
                                                      'genre': genre,
@@ -29,25 +49,33 @@ def main():
                                                  )
             apply_word_thread.start()
 
-        huitian_thread = threading.Thread(target=Worker.huitian, name='HuiTianThread',
+        huitian_thread = threading.Thread(target=Worker.huitian, name=f'HuiTianThread-{username}-{password}-{platform}',
                                           args=(worker, {
                                               'content_tab': content_tab,
                                           },)
                                           )
         huitian_thread.start()
 
-
-def relogin():
-    pass
+        relogin_thread = threading.Thread(target=Worker.relogin, name=f'ReloginThread-{platform}',
+                                          args=(worker, username, password,)
+                                          )
+        relogin_thread.start()
 
 
 class Worker:
-    def __init__(self):
-        self.fanqie_api = FanqieApi()
+    def __init__(self, proxy):
+        self.fanqie_api = FanqieApi(proxy)
+        self.douyin_api = DouyinApi(proxy)
         pass
 
     def login(self, username, password):
         self.fanqie_api.login(username, password)
+
+    def relogin(self, username, password):
+        while True:
+            time.sleep(6 * 3600)
+            self.fanqie_api.login(username, password)
+
 
     def apply_words(self, config):
         logger.info(config)
@@ -80,7 +108,7 @@ class Worker:
             book_split = book['book_name'].split("，")
             videos = []
             for book_split_item in book_split:
-                videos.extend(douyin_api.search(book_split_item))
+                videos.extend(self.douyin_api.search(book_split_item))
             logger.info("搜索到视频数量 %s", len(videos))
             all_keywords = set()
             for video in videos:
@@ -102,11 +130,18 @@ class Worker:
 
     def huitian(self, config):
         page_index = 0
+        huitian_type = 'unpost'
         while True:
             try:
-                promotions = self.fanqie_api.get_promotions(config['content_tab'], page_index)
+                if huitian_type == 'unpost':
+                    logger.info("获取未回填的列表")
+                    promotions = self.fanqie_api.get_unpost_promotions(config['content_tab'], page_index)
+                else:
+                    logger.info("获取即将失效的列表")
+                    promotions = self.fanqie_api.get_expire_promotions(config['content_tab'], page_index)
                 if not promotions:
-                    page_index = 1
+                    page_index = 0
+                    huitian_type = 'expire' if huitian_type == 'unpost' else 'unpost'
                     continue
                 for promotion in promotions:
                     self.huitian_promotion(promotion)
@@ -130,9 +165,9 @@ class Worker:
                 f'尝试回填 alias_id:{alias_id}, alias_name:{alias_name}, book_id:{book_id},book_name:{book_name}')
             alias_ctime = datetime.strptime(promotion['create_time'], '%Y-%m-%d %H:%M:%S').timestamp()
             target_video = None
-            videos = douyin_api.search(book_name, recent=True)
+            videos = self.douyin_api.search(book_name, recent=True)
             if not videos:
-                videos = douyin_api.search(alias_name, recent=True)
+                videos = self.douyin_api.search(alias_name, recent=True)
 
             for video in videos:
                 # 回填发文时间必须晚于申词时间
